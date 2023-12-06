@@ -1,16 +1,9 @@
 import os
-import re
+import pdb
 from dataclasses import dataclass, field
-from typing import NamedTuple
 
 FILE = os.path.join(os.path.dirname(__file__), "input.txt")
 
-
-class RangeConversion(NamedTuple):
-    src_start: int
-    src_end: int
-    dest_start: int
-    dest_end: int
 
 @dataclass
 class MapRange:
@@ -31,26 +24,51 @@ class MapRange:
 
     @property
     def src_end(self):
-        return self.src_start + self.length - 1
+        return self.src_start + self.length
+
+    @property
+    def dest_end(self):
+        return self.dest_start + self.length
+
+    def __repr__(self):
+        return f"{self.src_start}-{self.src_end} + ({self.offset}) = {self.dest_start}-{self.dest_end}"
 
     def __str__(self):
-        return f"{self.src_start}-{self.src_end} - ({self.offset}) = {self.dest_start}-{self.dest_end}"
+        return str(f"{self.src_start}-{self.src_end}")
 
     def __lt__(self, other):
         return self.src_start < other.src_start
 
-    @property
-    def dest_end(self):
-        return self.dest_start + self.length - 1
-
     def map_value(self, key: str | int, debug=False):
         key = int(key)
-        not_in_range = key < self.src_start or key > self.src_end
+        not_in_range = key < self.src_start or key >= self.src_end
 
         value = None if not_in_range else key + self.offset
         if debug:
             print(f"{self} -> {not not_in_range} {key}={value}")
         return value
+
+
+@dataclass
+class SeedRange:
+    start: int
+    end: int
+
+    def __str__(self):
+        return f"<Seeds {self.start}-{self.end}>"
+
+    def __repr__(self):
+        return str(self)
+
+    def __eq__(self, other):
+        if isinstance(other, SeedRange):
+            return (self.start, self.end) == (other.start, other.end)
+        elif isinstance(other, tuple):
+            return (self.start, self.end) == other
+        raise TypeError(f"Cannot compare SeedRange to {type(other)}")
+
+    def __lt__(self, other):
+        return self.start < other.start
 
 
 @dataclass
@@ -64,6 +82,9 @@ class Mapper:
         return f"{self.label} ({self.minimum}-{self.maximum})\n  " + "\n  ".join(
             list(str(map_range) for map_range in self.ranges)
         )
+
+    def __repr__(self):
+        return str(self)
 
     def __post_init__(self):
         self.ranges = sorted(self.ranges)
@@ -84,8 +105,52 @@ class Mapper:
                 return value
 
         return key
-    
-    def map_range(start: int, end: int) -> list[]
+
+    def map_range(self, seed: SeedRange) -> list[tuple[int, int]]:
+        # print(f"=={self.label}==")
+
+        if seed.end <= self.minimum or seed.start > self.maximum:
+            # this seed isn't handled by the range
+            # print(f"  {seed} not in mapper")
+            yield seed
+            return
+
+        cursor = seed.start
+        cursor_end = seed.end
+        for map_range in self.ranges:
+            if cursor >= map_range.src_end:
+                # this seed isn't handled by this range
+                # print(f"  {cursor}-{cursor_end} not in range {map_range}")
+                continue
+            if cursor < map_range.src_start:
+                # pass through beginning part of the seed range
+                # print(f"  {cursor}-{cursor_end} starts before beginning of {map_range}")
+                yield SeedRange(start=cursor, end=map_range.src_start)
+                cursor = map_range.src_start
+                # print(f"      remainder {cursor}-{cursor_end}")
+                continue
+
+            offset = map_range.offset
+            src_end = map_range.src_end
+            if cursor_end > src_end:
+                seed_start = cursor + offset
+                seed_end = src_end + offset
+                # print(f"  {cursor}-{cursor_end} ends after end of {map_range} -> new range {seed_start}-{seed_end}")
+
+                yield SeedRange(start=seed_start, end=seed_end)
+                cursor = src_end
+                # print(f"      remainder {cursor}-{cursor_end}")
+                continue
+            else:
+                # we found the end of the seed range
+                # print(f"  {cursor}-{cursor_end} ends before end of {map_range}")
+                yield SeedRange(start=cursor + offset, end=cursor_end + offset)
+                return
+
+        # if we get here, then we have yielded all of the ranges and have a
+        # unmapped remainder
+        # print(f"  {seed} ends outside of mapping")
+        yield SeedRange(start=cursor, end=cursor_end)
 
 
 def build_mappers(lines: list[str]) -> list[Mapper]:
@@ -105,8 +170,8 @@ def build_mappers(lines: list[str]) -> list[Mapper]:
         else:
             ranges.append(MapRange.create(line))
 
-    for mapper in mappers:
-        print(mapper)
+    mappers.append(Mapper(label=current_label, ranges=ranges))
+
     return mappers
 
 
@@ -116,21 +181,26 @@ def map_value(value: int, mappers: list[Mapper]):
     return value
 
 
+def map_ranges(seed_ranges: list[SeedRange], mappers: list[Mapper]):
+    for mapper in mappers:
+        mapped_ranges = []
+        for seed_range in seed_ranges:
+            for mapped_range in mapper.map_range(seed_range):
+                mapped_ranges.append(mapped_range)
+
+        seed_ranges = mapped_ranges
+    return sorted(seed_ranges)
+
+
 def iter_seed_ranges(seeds: list[str]):
-    total = len(seeds) // 2
+    index = 0
 
-    for idx in range(total):
-        pair_index = idx * 2
-        seed_range = int(seeds[pair_index + 1])
-        seed_start = int(seeds[(pair_index)])
-
-        yield seed_start, seed_range
-
-
-def iter_range(start: int, length: int):
-    for idx in range(length):
-        seed = start + idx
-        yield seed
+    while index < len(seeds):
+        range = int(seeds[index + 1])
+        start = int(seeds[index])
+        end = start + range
+        yield SeedRange(start=start, end=end)
+        index += 2
 
 
 def do_solution(lines: list[str]):
@@ -146,20 +216,12 @@ def do_solution(lines: list[str]):
 
 
 def do_solution_2(lines: list[str]):
-    result = None
     seeds = lines[0].strip().replace("seeds: ", "").split(" ")
     mappers: list[Mapper] = build_mappers(lines[1:])
-    value = None
-    lowest_seed = None
-    for seed_start, seed_range in iter_seed_ranges(seeds):
-        for seed in iter_range(seed_start, seed_range):
-            value = map_value(seed, mappers)
 
-            if result is None or value < result:
-                lowest_seed = seed
-                result = value
-    print(f"LOWEST: {lowest_seed} MAPPED: {result}")
-    return result
+    seed_ranges = list(iter_seed_ranges(seeds))
+    mapped_ranges = map_ranges(seed_ranges, mappers)
+    return mapped_ranges[0].start
 
 
 if __name__ == "__main__":
