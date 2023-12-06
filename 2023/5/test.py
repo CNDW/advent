@@ -1,6 +1,7 @@
 import re
 from itertools import chain
 
+import pytest
 from solution import Mapper, SeedRange, build_mappers, do_solution, do_solution_2, iter_seed_ranges, map_ranges
 
 # seed range [seed_start, length]
@@ -168,8 +169,23 @@ def test_map_ranges_3():
 
 
 def test_map_ranges_4():
-    mapper = build_mappers(EXAMPLE_LINES[1:])
+    mappers = build_mappers(EXAMPLE_LINES[1:])
     seed_ranges = list(iter_seed_ranges(["74", "14", "55", "13"]))
 
-    result = list(map_ranges(seed_ranges, mapper))
+    result = list(map_ranges(seed_ranges, mappers))
     assert sorted(result) == [(46, 52), (56, 60), (77, 85), (86, 90), (94, 97), (97, 99)]
+
+
+def test_seed_split():
+    seed_range = next(iter_seed_ranges(["74", "14"]))  # 74-87
+
+    assert seed_range.split(75) == ((74, 75), (75, 88))
+    assert seed_range.split(80) == ((74, 80), (80, 88))
+    with pytest.raises(ValueError):
+        seed_range.split(74)
+    with pytest.raises(ValueError):
+        seed_range.split(88)
+    with pytest.raises(ValueError):
+        seed_range.split(90)
+    with pytest.raises(ValueError):
+        seed_range.split(20)

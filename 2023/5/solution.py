@@ -6,7 +6,7 @@ FILE = os.path.join(os.path.dirname(__file__), "input.txt")
 
 
 @dataclass
-class MapRange:
+class RangeMap:
     src_start: int
     dest_start: int
     length: int
@@ -70,13 +70,26 @@ class SeedRange:
     def __lt__(self, other):
         return self.start < other.start
 
+    def split(self, at: int):
+        if at <= self.start or at >= self.end:
+            raise ValueError(f"Cannot split {self} at {at}")
+        return SeedRange(start=self.start, end=at), SeedRange(start=at, end=self.end)
+
+    def apply_offset(self, offset: int):
+        self.start += offset
+        self.end += offset
+
+    def is_in_range(self, range_map: RangeMap):
+        return self.start >= range_map.src_start and self.end <= range_map.src_end
+
 
 @dataclass
 class Mapper:
     label: str
-    ranges: list[MapRange]
+    ranges: list[RangeMap]
     minimum: int = 0
     maximum: int = 0
+    split_points: list[int] = field(default_factory=list)
 
     def __str__(self):
         return f"{self.label} ({self.minimum}-{self.maximum})\n  " + "\n  ".join(
@@ -88,17 +101,18 @@ class Mapper:
 
     def __post_init__(self):
         self.ranges = sorted(self.ranges)
-        self.minimum = self.ranges[0].src_start
-        self.maximum = self.ranges[-1].src_end
+        split_points = set()
+        for range in self.ranges:
+            split_points.add(range.src_start)
+            split_points.add(range.src_end)
+        self.split_points = sorted(split_points)
 
     @classmethod
     def create(cls, label: str, lines: list[str]):
-        return cls(label=label, ranges=[MapRange.create(line) for line in lines])
+        return cls(label=label, ranges=[RangeMap.create(line) for line in lines])
 
     def map_value(self, key: str | int, debug=False):
         key = int(key)
-        if key < self.minimum or key > self.maximum:
-            return key
         for map_range in self.ranges:
             value = map_range.map_value(key, debug=debug)
             if value is not None:
@@ -106,51 +120,29 @@ class Mapper:
 
         return key
 
-    def map_range(self, seed: SeedRange) -> list[tuple[int, int]]:
-        # print(f"=={self.label}==")
+    def apply_offset(self, seed: SeedRange):
+        for range_map in self.ranges:
+            if not seed.is_in_range(range_map):
+                continue
 
-        if seed.end <= self.minimum or seed.start > self.maximum:
-            # this seed isn't handled by the range
-            # print(f"  {seed} not in mapper")
-            yield seed
+            seed.apply_offset(range_map.offset)
+            break
+
+    def iter_splits(self, seed: SeedRange):
+        for split_point in self.split_points:
+            if split_point >= seed.end or split_point <= seed.start:
+                continue
+
+            before, after = seed.split(split_point)
+            yield from self.iter_splits(before)
+            yield from self.iter_splits(after)
             return
+        yield seed
 
-        cursor = seed.start
-        cursor_end = seed.end
-        for map_range in self.ranges:
-            if cursor >= map_range.src_end:
-                # this seed isn't handled by this range
-                # print(f"  {cursor}-{cursor_end} not in range {map_range}")
-                continue
-            if cursor < map_range.src_start:
-                # pass through beginning part of the seed range
-                # print(f"  {cursor}-{cursor_end} starts before beginning of {map_range}")
-                yield SeedRange(start=cursor, end=map_range.src_start)
-                cursor = map_range.src_start
-                # print(f"      remainder {cursor}-{cursor_end}")
-                continue
-
-            offset = map_range.offset
-            src_end = map_range.src_end
-            if cursor_end > src_end:
-                seed_start = cursor + offset
-                seed_end = src_end + offset
-                # print(f"  {cursor}-{cursor_end} ends after end of {map_range} -> new range {seed_start}-{seed_end}")
-
-                yield SeedRange(start=seed_start, end=seed_end)
-                cursor = src_end
-                # print(f"      remainder {cursor}-{cursor_end}")
-                continue
-            else:
-                # we found the end of the seed range
-                # print(f"  {cursor}-{cursor_end} ends before end of {map_range}")
-                yield SeedRange(start=cursor + offset, end=cursor_end + offset)
-                return
-
-        # if we get here, then we have yielded all of the ranges and have a
-        # unmapped remainder
-        # print(f"  {seed} ends outside of mapping")
-        yield SeedRange(start=cursor, end=cursor_end)
+    def map_range(self, seed: SeedRange):
+        for _seed in self.iter_splits(seed):
+            self.apply_offset(_seed)
+            yield _seed
 
 
 def build_mappers(lines: list[str]) -> list[Mapper]:
@@ -168,7 +160,7 @@ def build_mappers(lines: list[str]) -> list[Mapper]:
             current_label = line.replace(" map:", "")
             ranges = []
         else:
-            ranges.append(MapRange.create(line))
+            ranges.append(RangeMap.create(line))
 
     mappers.append(Mapper(label=current_label, ranges=ranges))
 
