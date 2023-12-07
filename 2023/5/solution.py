@@ -6,47 +6,35 @@ FILE = os.path.join(os.path.dirname(__file__), "input.txt")
 
 
 @dataclass
-class RangeMap:
-    src_start: int
-    dest_start: int
-    length: int
+class MapperRange:
+    start: int
+    end: int
     offset: int
 
     @classmethod
     def create(cls, line: str):
-        dest_start, src_start, length = line.strip().split(" ")
+        dest_start, start, length = line.strip().split(" ")
+        start = int(start)
         return cls(
-            src_start=int(src_start),
-            dest_start=int(dest_start),
-            length=int(length),
-            offset=int(dest_start) - int(src_start),
+            start=start,
+            end=start + int(length),
+            offset=int(dest_start) - start,
         )
 
-    @property
-    def src_end(self):
-        return self.src_start + self.length
-
-    @property
-    def dest_end(self):
-        return self.dest_start + self.length
-
     def __repr__(self):
-        return f"{self.src_start}-{self.src_end} + ({self.offset}) = {self.dest_start}-{self.dest_end}"
+        return f"<Mapper {self.start}-{self.end} ({self.offset})>"
 
     def __str__(self):
-        return str(f"{self.src_start}-{self.src_end}")
+        return str(f"{self.start}-{self.end}")
 
     def __lt__(self, other):
-        return self.src_start < other.src_start
+        return self.start < other.start
 
-    def map_value(self, key: str | int, debug=False):
+    def map_value(self, key: str | int):
         key = int(key)
-        not_in_range = key < self.src_start or key >= self.src_end
 
-        value = None if not_in_range else key + self.offset
-        if debug:
-            print(f"{self} -> {not not_in_range} {key}={value}")
-        return value
+        not_in_range = key < self.start or key >= self.end
+        return None if not_in_range else key + self.offset
 
 
 @dataclass
@@ -67,7 +55,7 @@ class SeedRange:
             return (self.start, self.end) == other
         raise TypeError(f"Cannot compare SeedRange to {type(other)}")
 
-    def __lt__(self, other):
+    def __lt__(self, other: "SeedRange"):
         return self.start < other.start
 
     def split(self, at: int):
@@ -79,22 +67,18 @@ class SeedRange:
         self.start += offset
         self.end += offset
 
-    def is_in_range(self, range_map: RangeMap):
-        return self.start >= range_map.src_start and self.end <= range_map.src_end
+    def is_in_range(self, mapper_range: MapperRange):
+        return self.start >= mapper_range.start and self.end <= mapper_range.end
 
 
 @dataclass
 class Mapper:
     label: str
-    ranges: list[RangeMap]
-    minimum: int = 0
-    maximum: int = 0
+    ranges: list[MapperRange]
     split_points: list[int] = field(default_factory=list)
 
     def __str__(self):
-        return f"{self.label} ({self.minimum}-{self.maximum})\n  " + "\n  ".join(
-            list(str(map_range) for map_range in self.ranges)
-        )
+        return f"<Mapper {self.label}>\n  " + "\n  ".join(list(str(map_range) for map_range in self.ranges))
 
     def __repr__(self):
         return str(self)
@@ -103,34 +87,36 @@ class Mapper:
         self.ranges = sorted(self.ranges)
         split_points = set()
         for range in self.ranges:
-            split_points.add(range.src_start)
-            split_points.add(range.src_end)
+            split_points.add(range.start)
+            split_points.add(range.end)
         self.split_points = sorted(split_points)
 
     @classmethod
     def create(cls, label: str, lines: list[str]):
-        return cls(label=label, ranges=[RangeMap.create(line) for line in lines])
+        return cls(label=label, ranges=[MapperRange.create(line) for line in lines])
 
-    def map_value(self, key: str | int, debug=False):
+    def map_value(self, key: str | int):
         key = int(key)
         for map_range in self.ranges:
-            value = map_range.map_value(key, debug=debug)
+            value = map_range.map_value(key)
             if value is not None:
                 return value
 
         return key
 
     def apply_offset(self, seed: SeedRange):
-        for range_map in self.ranges:
-            if not seed.is_in_range(range_map):
+        for mapper_range in self.ranges:
+            if not seed.is_in_range(mapper_range):
                 continue
 
-            seed.apply_offset(range_map.offset)
+            seed.start += mapper_range.offset
+            seed.end += mapper_range.offset
             break
 
     def iter_splits(self, seed: SeedRange):
         for split_point in self.split_points:
             if split_point >= seed.end or split_point <= seed.start:
+                # Split point is not in range, ignore
                 continue
 
             before, after = seed.split(split_point)
@@ -160,7 +146,7 @@ def build_mappers(lines: list[str]) -> list[Mapper]:
             current_label = line.replace(" map:", "")
             ranges = []
         else:
-            ranges.append(RangeMap.create(line))
+            ranges.append(MapperRange.create(line))
 
     mappers.append(Mapper(label=current_label, ranges=ranges))
 
@@ -188,9 +174,9 @@ def iter_seed_ranges(seeds: list[str]):
     index = 0
 
     while index < len(seeds):
-        range = int(seeds[index + 1])
+        length = int(seeds[index + 1])
         start = int(seeds[index])
-        end = start + range
+        end = start + length
         yield SeedRange(start=start, end=end)
         index += 2
 
@@ -208,10 +194,10 @@ def do_solution(lines: list[str]):
 
 
 def do_solution_2(lines: list[str]):
-    seeds = lines[0].strip().replace("seeds: ", "").split(" ")
+    seed_lines = lines[0].strip().replace("seeds: ", "").split(" ")
     mappers: list[Mapper] = build_mappers(lines[1:])
 
-    seed_ranges = list(iter_seed_ranges(seeds))
+    seed_ranges = list(iter_seed_ranges(seed_lines))
     mapped_ranges = map_ranges(seed_ranges, mappers)
     return mapped_ranges[0].start
 
